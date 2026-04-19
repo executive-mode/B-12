@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskFlow</title>
+  <style>
+    body { font-family: Arial; margin: 0; padding: 0; }
+
+    header {
+      background: #222;
+      color: white;
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    #tabs {
+      display: flex;
+      overflow-x: auto;
+      padding: 5px;
+      background: #eee;
+    }
+
+    .tab {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .active { border: 2px solid black; }
+
+    #inputArea {
+      padding: 10px;
+      background: #f9f9f9;
+    }
+
+    input, select, button {
+      margin: 5px;
+      padding: 8px;
+    }
+
+    .task {
+      padding: 10px;
+      margin: 5px;
+      border-left: 5px solid black;
+      background: #fff;
+    }
+
+    .overdue { color: red; }
+
+    .bottomBar {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      background: #ddd;
+      padding: 10px;
+      display: flex;
+      justify-content: space-around;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <div>TaskFlow</div>
+  <button onclick="addCategory()">+ Team</button>
+</header>
+
+<div id="tabs"></div>
+
+<div id="inputArea">
+  <input id="taskInput" placeholder="Enter task">
+  <input type="datetime-local" id="taskTime">
+
+  <select id="recurrence">
+    <option value="none">One-time</option>
+    <option value="daily">Daily</option>
+    <option value="weekly">Weekly</option>
+  </select>
+
+  <select id="priority">
+    <option value="low">Low</option>
+    <option value="medium">Medium</option>
+    <option value="high">High</option>
+  </select>
+
+  <button onclick="addTask()">Add</button>
+</div>
+
+<div id="taskList"></div>
+
+<div class="bottomBar">
+  <button onclick="setFilter('all')">All</button>
+  <button onclick="setFilter('today')">Today</button>
+  <button onclick="setFilter('overdue')">Overdue</button>
+  <button onclick="setFilter('high')">High</button>
+</div>
+
+<script>
+
+let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
+let categories = JSON.parse(localStorage.getItem("categories")) || [
+  { id: 1, name: "Team A", color: "#ff6b6b" }
+];
+
+let selectedCategory = "today";
+let filter = "all";
+
+// Notification
+if ("Notification" in window) {
+  Notification.requestPermission();
+}
+
+function saveAll(){
+  localStorage.setItem("tasks", JSON.stringify(tasks));
+  localStorage.setItem("categories", JSON.stringify(categories));
+}
+
+// Tabs
+function renderTabs(){
+  let div = document.getElementById("tabs");
+  div.innerHTML = "";
+
+  // Today tab
+  let todayTab = document.createElement("div");
+  todayTab.innerText = "Today";
+  todayTab.className = "tab " + (selectedCategory==="today"?"active":"");
+  todayTab.onclick = () => { selectedCategory="today"; renderTabs(); renderTasks(); };
+  div.appendChild(todayTab);
+
+  categories.forEach(cat=>{
+    let t = document.createElement("div");
+    t.innerText = cat.name;
+    t.className = "tab " + (selectedCategory===cat.id?"active":"");
+    t.style.background = cat.color;
+
+    t.onclick = ()=>{ selectedCategory=cat.id; renderTabs(); renderTasks(); };
+
+    t.oncontextmenu = (e)=>{
+      e.preventDefault();
+      let act = prompt("rename/delete");
+      if(act==="rename"){
+        let n = prompt("New name");
+        if(n){ cat.name=n; saveAll(); renderTabs(); }
+      }
+      if(act==="delete"){
+        categories = categories.filter(c=>c.id!==cat.id);
+        tasks = tasks.filter(t=>t.category!==cat.id);
+        saveAll(); renderTabs(); renderTasks();
+      }
+    };
+
+    div.appendChild(t);
+  });
+}
+
+// Add team
+function addCategory(){
+  let name = prompt("Team name");
+  let color = prompt("Color hex", "#ccc");
+  if(!name) return;
+
+  categories.push({ id: Date.now(), name, color });
+  saveAll();
+  renderTabs();
+}
+
+// Add task
+function addTask(){
+  let title = document.getElementById("taskInput").value;
+  let time = document.getElementById("taskTime").value;
+  let recurrence = document.getElementById("recurrence").value;
+  let priority = document.getElementById("priority").value;
+
+  if(!title) return;
+
+  if(!time){
+    time = new Date(Date.now()+5*60000).toISOString();
+  }
+
+  tasks.push({
+    id: Date.now(),
+    title,
+    time,
+    recurrence,
+    priority,
+    completed:false,
+    notified:false,
+    category: selectedCategory==="today"?categories[0].id:selectedCategory
+  });
+
+  saveAll();
+  renderTasks();
+}
+
+// Render tasks
+function renderTasks(){
+  let div = document.getElementById("taskList");
+  div.innerHTML = "";
+
+  let now = new Date();
+
+  tasks.forEach(task=>{
+
+    if(task.completed) return;
+
+    // Today tab logic
+    if(selectedCategory==="today"){
+      let d = new Date(task.time);
+      if(d.toDateString()!==now.toDateString()) return;
+    } else {
+      if(task.category!==selectedCategory) return;
+    }
+
+    // Filters
+    if(filter==="overdue" && new Date(task.time)>now) return;
+    if(filter==="high" && task.priority!=="high") return;
+
+    let t = document.createElement("div");
+    t.className="task";
+
+    if(new Date(task.time)<now) t.classList.add("overdue");
+
+    let cat = categories.find(c=>c.id===task.category);
+    t.style.borderLeftColor = cat?.color || "black";
+
+    t.innerHTML = `
+      <b>${task.title}</b><br>
+      ${new Date(task.time).toLocaleString()} (${task.recurrence})<br>
+      Priority: ${task.priority}<br>
+      <button onclick="done(${task.id})">Done</button>
+      <button onclick="snooze(${task.id})">Snooze</button>
+    `;
+
+    div.appendChild(t);
+  });
+}
+
+// Done
+function done(id){
+  let t = tasks.find(x=>x.id===id);
+
+  if(t.recurrence!=="none"){
+    let d = new Date(t.time);
+    if(t.recurrence==="daily") d.setDate(d.getDate()+1);
+    if(t.recurrence==="weekly") d.setDate(d.getDate()+7);
+
+    tasks.push({...t, id:Date.now(), time:d.toISOString(), notified:false});
+  }
+
+  t.completed=true;
+  saveAll();
+  renderTasks();
+}
+
+// Snooze
+function snooze(id){
+  let t = tasks.find(x=>x.id===id);
+  let d = new Date(t.time);
+  d.setMinutes(d.getMinutes()+10);
+  t.time = d.toISOString();
+  t.notified=false;
+  saveAll();
+  renderTasks();
+}
+
+// Filter
+function setFilter(f){
+  filter=f;
+  renderTasks();
+}
+
+// Reminder
+function checkReminders(){
+  let now=new Date();
+
+  tasks.forEach(t=>{
+    if(!t.completed && !t.notified && new Date(t.time)<=now){
+      if(Notification.permission==="granted"){
+        new Notification("Reminder",{body:t.title});
+      }
+      t.notified=true;
+    }
+  });
+
+  saveAll();
+}
+
+setInterval(checkReminders,30000);
+
+renderTabs();
+renderTasks();
+
+</script>
+
+</body>
+</html>

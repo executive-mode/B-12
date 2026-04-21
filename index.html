@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B-12</title>
+
+<style>
+body { font-family: -apple-system; margin:0; background:#f2f2f7; }
+
+header {
+  background:#111; color:white; padding:12px;
+  display:flex; justify-content:space-between; align-items:center;
+}
+
+button {
+  border:none; padding:8px 12px; border-radius:10px;
+}
+
+.primary { background:#007aff; color:white; }
+
+#tabs {
+  display:flex; overflow-x:auto; padding:10px; gap:10px;
+}
+
+.tab {
+  padding:10px; border-radius:12px;
+  white-space:nowrap;
+}
+
+.active { border:2px solid black; }
+
+.task {
+  background:white; margin:10px; padding:12px;
+  border-radius:12px;
+}
+
+.overdue { color:red; }
+
+.bottom {
+  position:fixed; bottom:0; width:100%;
+  display:flex; justify-content:space-around;
+  background:#ddd; padding:10px;
+}
+
+.modal {
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.5);
+  display:none; align-items:center; justify-content:center;
+}
+
+.modal-content {
+  background:white; padding:20px;
+  border-radius:12px; width:90%;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div>B-12</div>
+  <button class="primary" onclick="openTeamModal()">+ Team</button>
+</header>
+
+<div id="tabs"></div>
+
+<div style="padding:10px;">
+  <button class="primary" onclick="openTaskModal()">+ Add Task</button>
+</div>
+
+<div id="taskList"></div>
+
+<div class="bottom">
+  <button onclick="setFilter('all')">All</button>
+  <button onclick="setFilter('today')">Today</button>
+  <button onclick="setFilter('overdue')">Overdue</button>
+  <button onclick="setFilter('high')">High</button>
+</div>
+
+<!-- Task Modal -->
+<div id="taskModal" class="modal">
+<div class="modal-content">
+  <h3>Task</h3>
+  <input id="taskTitle" placeholder="Task"><br><br>
+  <input type="datetime-local" id="taskTime"><br><br>
+
+  <select id="taskRecurrence">
+    <option value="none">One-time</option>
+    <option value="daily">Daily</option>
+    <option value="weekly">Weekly</option>
+  </select>
+
+  <select id="taskPriority">
+    <option value="low">Low</option>
+    <option value="medium">Medium</option>
+    <option value="high">High</option>
+  </select>
+
+  <br><br>
+  <button onclick="saveTask()" class="primary">Save</button>
+  <button onclick="closeTaskModal()">Cancel</button>
+</div>
+</div>
+
+<!-- Team Modal -->
+<div id="teamModal" class="modal">
+<div class="modal-content">
+  <h3>Team</h3>
+  <input id="teamName" placeholder="Team name"><br><br>
+  <input id="teamColor" placeholder="#ff0000"><br><br>
+
+  <button onclick="saveTeam()" class="primary">Save</button>
+  <button onclick="closeTeamModal()">Cancel</button>
+</div>
+</div>
+
+<script>
+
+let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
+let categories = JSON.parse(localStorage.getItem("categories")) || [
+  {id:1,name:"Team A",color:"#ff6b6b"}
+];
+
+let selectedCategory = "today";
+let filter = "all";
+let editingTask = null;
+
+function saveAll(){
+  localStorage.setItem("tasks", JSON.stringify(tasks));
+  localStorage.setItem("categories", JSON.stringify(categories));
+}
+
+function renderTabs(){
+  let div = document.getElementById("tabs");
+  div.innerHTML="";
+
+  let today = document.createElement("div");
+  today.innerText="Today";
+  today.className="tab " + (selectedCategory==="today"?"active":"");
+  today.onclick=()=>{selectedCategory="today";renderTabs();renderTasks();}
+  div.appendChild(today);
+
+  categories.forEach(cat=>{
+    let t=document.createElement("div");
+    t.innerText=cat.name;
+    t.className="tab " + (selectedCategory===cat.id?"active":"");
+    t.style.background=cat.color;
+
+    t.onclick=()=>{selectedCategory=cat.id;renderTabs();renderTasks();}
+
+    t.ondblclick=()=>editTeam(cat.id);
+
+    div.appendChild(t);
+  });
+}
+
+function renderTasks(){
+  let div=document.getElementById("taskList");
+  div.innerHTML="";
+  let now=new Date();
+
+  tasks.forEach(task=>{
+    if(task.completed) return;
+
+    if(selectedCategory==="today"){
+      let d=new Date(task.time);
+      if(d.toDateString()!==now.toDateString()) return;
+    } else {
+      if(task.category!==selectedCategory) return;
+    }
+
+    if(filter==="overdue" && new Date(task.time)>now) return;
+    if(filter==="high" && task.priority!=="high") return;
+
+    let t=document.createElement("div");
+    t.className="task";
+
+    if(new Date(task.time)<now) t.classList.add("overdue");
+
+    t.innerHTML=`
+      <b>${task.title}</b><br>
+      ${new Date(task.time).toLocaleString()} (${task.recurrence})<br>
+      Priority: ${task.priority}<br><br>
+
+      <button onclick="done(${task.id})">Done</button>
+      <button onclick="editTask(${task.id})">Edit</button>
+      <button onclick="deleteTask(${task.id})">Delete</button>
+    `;
+
+    div.appendChild(t);
+  });
+}
+
+function openTaskModal(){
+  editingTask=null;
+  document.getElementById("taskModal").style.display="flex";
+}
+
+function closeTaskModal(){
+  document.getElementById("taskModal").style.display="none";
+}
+
+function saveTask(){
+  let title=document.getElementById("taskTitle").value;
+  let time=document.getElementById("taskTime").value;
+  let rec=document.getElementById("taskRecurrence").value;
+  let pri=document.getElementById("taskPriority").value;
+
+  if(!title) return;
+
+  if(!time) time=new Date().toISOString();
+
+  if(editingTask){
+    Object.assign(editingTask,{title,time,recurrence:rec,priority:pri});
+  } else {
+    tasks.push({
+      id:Date.now(),
+      title,time,
+      recurrence:rec,
+      priority:pri,
+      completed:false,
+      category: selectedCategory==="today"?categories[0].id:selectedCategory
+    });
+  }
+
+  saveAll();
+  closeTaskModal();
+  renderTasks();
+}
+
+function editTask(id){
+  let t=tasks.find(x=>x.id===id);
+  editingTask=t;
+
+  document.getElementById("taskTitle").value=t.title;
+  document.getElementById("taskTime").value=t.time.slice(0,16);
+  document.getElementById("taskRecurrence").value=t.recurrence;
+  document.getElementById("taskPriority").value=t.priority;
+
+  openTaskModal();
+}
+
+function deleteTask(id){
+  tasks=tasks.filter(t=>t.id!==id);
+  saveAll();
+  renderTasks();
+}
+
+function done(id){
+  let t=tasks.find(x=>x.id===id);
+
+  if(t.recurrence!=="none"){
+    let d=new Date(t.time);
+    if(t.recurrence==="daily") d.setDate(d.getDate()+1);
+    if(t.recurrence==="weekly") d.setDate(d.getDate()+7);
+
+    tasks.push({...t,id:Date.now(),time:d.toISOString()});
+  }
+
+  t.completed=true;
+  saveAll();
+  renderTasks();
+}
+
+function openTeamModal(){
+  document.getElementById("teamModal").style.display="flex";
+}
+
+function closeTeamModal(){
+  document.getElementById("teamModal").style.display="none";
+}
+
+function saveTeam(){
+  let name=document.getElementById("teamName").value;
+  let color=document.getElementById("teamColor").value || "#ccc";
+
+  categories.push({id:Date.now(),name,color});
+  saveAll();
+  closeTeamModal();
+  renderTabs();
+}
+
+function editTeam(id){
+  let c=categories.find(x=>x.id===id);
+
+  let newName=prompt("Rename team",c.name);
+  if(newName) c.name=newName;
+
+  if(confirm("Delete team?")){
+    categories=categories.filter(x=>x.id!==id);
+    tasks=tasks.filter(t=>t.category!==id);
+  }
+
+  saveAll();
+  renderTabs();
+  renderTasks();
+}
+
+function setFilter(f){
+  filter=f;
+  renderTasks();
+}
+
+renderTabs();
+renderTasks();
+
+</script>
+
+</body>
+</html>
